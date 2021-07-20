@@ -1,19 +1,15 @@
 import uuid
 from collections import namedtuple
 from moto.core import ACCOUNT_ID
-
-ARN = namedtuple("ARN", ["region", "account", "function_name", "version"])
-
-
-def create_test_name(name):
-    return "{0}-{1}".format(name, uuid.uuid4())[0:128]
+from typing import Tuple
+from uuid import UUID
 
 
-def make_arn(service, region, name):
-    return "arn:aws:wafv2:{0}:{1}:regional/{2}/{3}/{4}".format(
-        region, ACCOUNT_ID, service, name, uuid.uuid4()
-    )
+# https://docs.aws.amazon.com/waf/latest/developerguide/how-aws-waf-works.html - explains --scope (cloudfront vs regional)
+def make_arn_for_wacl(name: str, region_name:str , id: UUID, scope: str) -> str:
 
+    if scope == "REGIONAL": scope = "regional"
+    elif scope == "CLOUDFRONT": scope = "global"
+    return "arn:aws:wafv2:{}:{}:{}/webacl/{}/{}".format(region_name, ACCOUNT_ID, scope, name, id)
 
-def make_webacl_arn(region, name):
-    return make_arn("webacl", region, name)
+# ACCOUNTID: ACCOUNT_ID = os.environ.get("MOTO_ACCOUNT_ID", "123456789012")

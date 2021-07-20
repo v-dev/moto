@@ -1,53 +1,76 @@
 from __future__ import unicode_literals
+import json
+import pytest
 
 import sure  # noqa
 
+import boto3
+import botocore
+from botocore.exceptions import ClientError
 import moto.server as server
 from moto import mock_wafv2
 from moto.wafv2 import GLOBAL_REGION
 from moto.wafv2.models import US_EAST_1_REGION
+from test_helper_functions import CREATE_WEB_ACL_BODY, LIST_WEB_ACL_BODY
 
-"""
-Test the different server responses
-"""
-HEADERS = {
+CREATE_WEB_ACL_HEADERS = {
+    "X-Amz-Target": "AWSWAF_20190729.CreateWebACL",
+    "Content-Type": "application/json",
+}
+
+
+LIST_WEB_ACL_HEADERS = {
     "X-Amz-Target": "AWSWAF_20190729.ListWebACLs",
     "Content-Type": "application/json",
 }
 
 
 @mock_wafv2
-def test_wafv2_list_regional():
+def test_create_web_acl():
     backend = server.create_backend_app("wafv2")
     test_client = backend.test_client()
-    res = test_client.post("/", headers=HEADERS, json={"Scope": "REGIONAL"})
-    actual_webacls = res.json["WebACLs"]
-    assert len(actual_webacls) == 2
-    validate_name_and_description(GLOBAL_REGION, actual_webacls)
+
+    res = test_client.post("/", headers=CREATE_WEB_ACL_HEADERS, json=CREATE_WEB_ACL_BODY("John", "REGIONAL"))
+    assert res.status_code == 200
+
+    web_acl = res.json["Summary"]
+    assert web_acl.get("Name") == "John"
+    assert web_acl.get("ARN").startswith("arn:aws:wafv2:us-east-1:123456789012:regional/webacl/John/")
+
+    # Duplicate name - should raise error
+    res = test_client.post("/", headers=CREATE_WEB_ACL_HEADERS, json=CREATE_WEB_ACL_BODY("John", "REGIONAL"))
+    assert res.status_code == 400
+
+
+    res = test_client.post("/", headers=CREATE_WEB_ACL_HEADERS, json=CREATE_WEB_ACL_BODY("Carl", "CLOUDFRONT"))
+    web_acl = res.json["Summary"]
+    assert web_acl.get("ARN").startswith("arn:aws:wafv2:global:123456789012:global/webacl/Carl/")
+
+    print(json.dumps(res.json, indent=2))
 
 
 @mock_wafv2
-def test_wafv2_list_cloudfront():
+def test_list_web_ac_ls():
     backend = server.create_backend_app("wafv2")
     test_client = backend.test_client()
-    res = test_client.post("/", headers=HEADERS, json={"Scope": "CLOUDFRONT"})
-    actual_webacls = res.json["WebACLs"]
-    assert len(actual_webacls) == 2
-    validate_name_and_description(US_EAST_1_REGION, actual_webacls)
+
+    test_client.post("/", headers=CREATE_WEB_ACL_HEADERS, json=CREATE_WEB_ACL_BODY("John", "REGIONAL"))
+    test_client.post("/", headers=CREATE_WEB_ACL_HEADERS, json=CREATE_WEB_ACL_BODY("JohnSon", "REGIONAL"))
+    test_client.post("/", headers=CREATE_WEB_ACL_HEADERS, json=CREATE_WEB_ACL_BODY("Sarah", "CLOUDFRONT"))
+    res = test_client.post("/", headers=LIST_WEB_ACL_HEADERS, json=LIST_WEB_ACL_BODY("REGIONAL"))
+    assert res.status_code == 200
+
+    web_acls = res.json["WebACLs"]
+    assert len(web_acls) == 2
+    assert web_acls[0]["Name"] == "John"
+    assert web_acls[1]["Name"] == "JohnSon"
+
+    res = test_client.post("/", headers=LIST_WEB_ACL_HEADERS, json=LIST_WEB_ACL_BODY("CLOUDFRONT"))
+    assert res.status_code == 200
+    web_acls = res.json["WebACLs"]
+    assert len(web_acls) == 1
+    assert web_acls[0]["Name"] == "Sarah"
 
 
-def create_expected_name(first_or_second, region):
-    return "{0}-mock-webacl-for-{1}".format(first_or_second, region)
-
-
-def validate_name_and_description(region, actual_webacls):
-    first_name = create_expected_name("first", region)
-    second_name = create_expected_name("second", region)
-    assert first_name in actual_webacls[0]["Name"]
-    assert second_name in actual_webacls[1]["Name"]
-    assert (
-        "Mock WebACL named {0}".format(first_name) in actual_webacls[0]["Description"]
-    )
-    assert (
-        "Mock WebACL named {0}".format(second_name) in actual_webacls[1]["Description"]
-    )
+test_list_web_ac_ls()
+test_create_web_acl()
